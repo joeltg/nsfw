@@ -12,21 +12,14 @@ from numpy.testing import assert_array_equal
 import scipy.misc, scipy.io
 import patchShow
 
-# caffe.set_mode_gpu()
 caffe.set_mode_cpu()
 
 def save_image(img, name):
-    '''
-    Normalize and save the image.
-    '''
     img = img[:,::-1, :, :] # Convert from BGR to RGB
     normalized_img = patchShow.patchShow_single(img, in_range=(-120,120))
     scipy.misc.imsave(name, normalized_img)
 
-
 def get_shape(data_shape):
-
-    # Return (227, 227) from (1, 3, 227, 227) tensor
     if len(data_shape) == 4:
         return (data_shape[2], data_shape[3])
     else:
@@ -36,49 +29,29 @@ np.random.seed(0)
 
 generator = caffe.Net(settings.generator_definition, settings.generator_weights, caffe.TEST)
 shape = generator.blobs["feat"].data.shape
-# shape is a tuple = (1, 4096)
 generator_output_shape = generator.blobs["deconv0"].data.shape
-
 mean = np.float32([104.0, 117.0, 123.0])
-
-
 nsfw_net = caffe.Classifier("nets/open_nsfw/deploy.prototxt",
             		       "nets/open_nsfw/resnet_50_1by2_nsfw.caffemodel",
                        mean = mean,            # ImageNet mean
                        channel_swap = (2,1,0)) # the reference model has channels in BGR order instead of RGB
 
-
 def grad_classifier(classifier, end_layer, imagein, z):
-
     net_dst = classifier.blobs[end_layer]
-
-    # Do forward pass
     acts = classifier.forward(data=imagein, end=end_layer)
-
-    # Do backwards pass
     net_dst.diff[:] = z
     g = classifier.backward(start=end_layer, diffs=['data'])['data'][0]
-
-    # Cleanup
     net_dst.diff.fill(0.)
     return g, acts
 
 def grad(classifier, end_layer, i, code):
-
-    # Perform Forward Step
     generated = generator.forward(feat=code)
     image = crop(classifier, generated["deconv0"])
-
-    # Set the inner product the gradient is taken w.r. to
     z = np.zeros_like(classifier.blobs[end_layer].data)
     z.flat[i] = 1
-
-    # Do backwards step
     g, acts = grad_classifier(classifier, end_layer, image, z)
     generator.blobs['deconv0'].diff[...] = pad(classifier, g)
     gx = generator.backward(start='deconv0')
-
-    # Cleanup
     generator.blobs['deconv0'].diff.fill(0.)
     return gx['feat'], image
 
@@ -120,40 +93,37 @@ def get_code(path, layer):
     zero_feat = feat[0].copy()[np.newaxis]
     return zero_feat, data
 
-np.random.seed(200)
-
-init_file = "test-jordan224.jpg"
 opt_layer = 'fc6'
-code, start_image = get_code(init_file, opt_layer)
-
 total_iters = 300
-
 alpha = 1
-upper_bound = lower_bound = None
 
-# Set up clipping bounds
-upper_bound = np.loadtxt("act_range/3x/fc6.txt", delimiter=' ', usecols=np.arange(0, 4096), unpack=True)
-upper_bound = upper_bound.reshape(4096)
+def main(filename, iters=total_iters):
+    np.random.seed(0)
 
-# Lower bound of 0 due to ReLU
-lower_bound = np.zeros(4096)
+    code, start_image = get_code(filename, opt_layer)
+    upper_bound = np.loadtxt("act_range/3x/fc6.txt", delimiter=' ', usecols=np.arange(0, 4096), unpack=True)
+    upper_bound = upper_bound.reshape(4096)
 
-for i in range(0,total_iters):
-    step_size = (alpha + (1e-10 - alpha) * i) / total_iters
-    gn, image = grad(nsfw_net, 'prob', 1, code)
+    lower_bound = np.zeros(4096)
 
-    g = 1500*gn
+    for i in range(0,iters):
+        step_size = (alpha + (1e-10 - alpha) * i) / iters
+        gn, image = grad(nsfw_net, 'prob', 1, code)
 
-    # print norm(gn)
+        g = 1500 * gn
 
-    if norm(g) <= 1e-8:
-        break
-    code = code - step_size*g/np.abs(g).mean()
-    code = np.maximum(code, lower_bound)
+        if norm(g) <= 1e-8:
+            break
 
-    # 1*upper bound produces realistic looking images
-    # No upper bound produces dramatic high saturation pics
-    # 1.5* Upper bound is a decent choice
-    code = np.minimum(code, 1.5*upper_bound)
+        code = code - step_size*g/np.abs(g).mean()
+        code = np.maximum(code, lower_bound)
 
-    save_image(image, "output/" + str(i) + ".jpg")
+        # 1*upper bound produces realistic looking images
+        # No upper bound produces dramatic high saturation pics
+        # 1.5* Upper bound is a decent choice
+        code = np.minimum(code, 1.5*upper_bound)
+
+        save_image(image, "output/" + str(i) + ".jpg")
+
+if __name__ == '__main__':
+    main('jordan1.jpg')

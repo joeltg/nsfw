@@ -1,6 +1,6 @@
 # Set this to the path to Caffe installation on your system
-caffe_root = "/path/to/your/caffe/python" 
-gpu = True
+caffe_root = "/home/joel/dev/caffe/python"
+gpu = False
 
 # -------------------------------------
 # These settings should work by default
