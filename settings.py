@@ -1,5 +1,5 @@
 # Set this to the path to Caffe installation on your system
-caffe_root = "/home/joel/dev/caffe/python"
+caffe_root = "/usr/local/caffe/python"
 gpu = False
 
 # -------------------------------------
